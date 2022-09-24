@@ -383,7 +383,6 @@ if __name__ == "__main__":
 
     parser.add_argument('--wandb_project_name', dest='project', default='Internship-BBoxDetection')
 
-
     parser = setup_argparser(__default_train_config__, parser)
     args = parser.parse_args()
 

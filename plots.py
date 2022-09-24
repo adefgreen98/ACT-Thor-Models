@@ -40,6 +40,9 @@ def draw_bbox_on_supblot(sb, bratio=0.1):
 
 
 def load_outs_dataframe(pth):
+    """
+    Loads one DataFrame containing outputs from an experiment.
+    """
     full_df = pandas.read_csv(pth)
 
     try:
@@ -57,8 +60,11 @@ def compute_accuracy(full_df,
                      add_visual_baseline=True, add_human_baseline=True,
                      drop_sample_split=True,
                      override_indexer=None):
-    """Calculates an accuracy dataframe from the path of the outputs' dataframe. Eventually add baselines for visual-only
-    and human models."""
+    """Calculates an accuracy dataframe from the path of the outputs' dataframe. Eventually add baselines for
+    visual-only and random models.
+
+    The visual baseline is built with the pre-determined most visually similar vector in the column
+    """
 
     # if use_short_names:
     #     full_df['vect_model'] = full_df['vect_model'].map(lambda name: shorten_model_name(name))

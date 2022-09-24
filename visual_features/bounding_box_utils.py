@@ -1,5 +1,7 @@
 
 # Original code from https://github.com/rafaelpadilla/review_object_detection_metrics adapted for this project
+# Only here for compatibility with code for bounding boxes, not used in the final paper
+
 import sys
 from collections import Counter
 

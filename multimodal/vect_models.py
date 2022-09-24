@@ -1,4 +1,5 @@
 import json
+import os.path
 from collections import OrderedDict
 
 import torch
@@ -20,7 +21,11 @@ __action_embedding_size__ = 768
 
 
 class AbstractVectorTransform(ABC, nn.Module):
-    """Base class for all models of Vector Transformation (VecT)."""
+    """
+    Base class for all models of Vector Transformation (VecT).
+
+    This is needed in order to have a general structure for embedding actions and processing batches.
+    """
 
     @abstractmethod
     def __init__(self, actions: set, vec_size: int,
@@ -96,7 +101,11 @@ __supported_regressions__ = {None, 'torch'}
 
 class LinearVectorTransform(AbstractVectorTransform):
     """Module implementing vector transformation as matrix multiplication. Can also be initialized with a least-squares
-    regression procedure."""
+    regression procedure.
+
+    In the main paper, this is called Action-Matrix (AM).
+
+    """
 
     # TODO implement this as a single tensor to allow batched learning
     def __init__(self, actions: set, vec_size: int,
@@ -150,6 +159,13 @@ class LinearVectorTransform(AbstractVectorTransform):
 
 
 class LinearConcatVecT(AbstractVectorTransform):
+    """
+    Implements vector transformation as concatenation of visual embedding and action embedding followed
+    by a multiplication by a unique weight matrix.
+
+    In the main paper, this is called Concat-Linear (CL).
+    """
+
     def __init__(self, actions: set, vec_size: int, conditioning_method='concat', **kwargs):
         super().__init__(actions, vec_size, **kwargs)
 
@@ -170,8 +186,12 @@ class LinearConcatVecT(AbstractVectorTransform):
 
 
 class ConditionalFCNVecT(AbstractVectorTransform):
-    """Module implementing vector transform as a conditional feedforward network, where the input
-    vector is combined with the action label embedding to provide conditionality."""
+    """
+    Module implementing vector transform as a conditional feedforward network, where the input
+    vector is combined with the action label embedding to provide conditionality.
+
+    In the main paper it is named Concat-Multi (CM).
+    """
 
     def __init__(self, actions: set, vec_size: int,
                  hidden_sizes=None,
@@ -222,9 +242,15 @@ __name_map__ = {
 }
 
 
-def load_model(path, actions=None):
+def load_model(path, actions=None, data_folder="new-dataset/data-improved-descriptions"):
+    """
+    Loads a VectorTransform model with the predefined set of actions.
+
+    If not defined, actions are loaded from the specified data folder. The dataset should automatically save actions
+    in the same folder the first time is loaded.
+    """
     if actions is None:
-        with open('new-dataset/data-improved-descriptions/actions.json', mode='rt') as fp:
+        with open(os.path.join(data_folder, "actions.json"), mode='rt') as fp:
             actions = set(json.load(fp).keys())
 
     sd = torch.load(path)

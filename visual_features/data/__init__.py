@@ -78,7 +78,7 @@ def convert_action(name: str):
     return ACTION_CONVERSION_TABLE[int(name)]
 
 
-def load_and_rework_csv(basepath, dfname):
+def load_and_rework_csv(basepath, dfname, drop_cook=True):
     """Loads the annotation DataFrame from the specified csv file and reworks paths to coincide
      with the specified basepath. Also drops contrasts (rows) where
     the action is 'cook' is present either as positive or negative."""
@@ -94,8 +94,11 @@ def load_and_rework_csv(basepath, dfname):
         return _df
 
     df = rework_annotations_path(df, basepath)
-    for c in ['action_name', 'distractor0_action_name', 'distractor1_action_name', 'distractor2_action_name']:
-        df.drop(index=df[df[c] == 'cook'].index, inplace=True)
+
+    if drop_cook:
+        for c in ['action_name', 'distractor0_action_name', 'distractor1_action_name', 'distractor2_action_name']:
+            df.drop(index=df[df[c] == 'cook'].index, inplace=True)
+
     df.index = pandas.Series(range(len(df)))
 
     return df
@@ -462,8 +465,7 @@ class BBoxDataset(torch.utils.data.Dataset):
 
         self.transform = transforms.ToTensor() if transform is None else transform
 
-        self._annotations = pandas.read_csv(self.path / 'bbox-data.csv', index_col=0)
-        self._annotations = rework_annotations_path(self._annotations, self.path)
+        self._annotations = load_and_rework_csv(self._annotations, self.path, drop_cook=False)
 
         added_before_samples = {}
         for idx, row in self._annotations.iterrows():
@@ -588,6 +590,18 @@ def contrastive_collate(batch):
 
 
 def get_data(data_path, batch_size=32, dataset_type=None, obj_dict=None, transform=None, valid_ratio=0.2, **kwargs):
+    """
+    Returns dataset and 3 dataloaders (train, validation, test) for the specified `dataset_type` parameter:
+    `bboxes` for bounding boxes dataset and `vect` for vector-transform dataset.
+    Within `kwargs` there are 2 important parameters:
+        * `use_regression`: decides whether to have a simpler dataset for least-squares regression
+        * `use_contrastive` / `use_infonce`: determine if the collate function should be simple
+        (with only before, action, after) or compatible with contrastive losses as InfoNCE (containing also negatives)
+
+    The seen-unseen split is performed by the dataset according to the `holdout_procedure` argument.
+
+    """
+
     if dataset_type == 'bboxes':
         # Transforms should be not none because FastRCNN require PIL images
         dataset = BBoxDataset(data_path, transform=transform, object_conversion_table=obj_dict)
@@ -616,7 +630,7 @@ def get_data(data_path, batch_size=32, dataset_type=None, obj_dict=None, transfo
         test_dl = torch.utils.data.DataLoader(test_set, batch_size=1,
                                               collate_fn=touse_collate)  # here for compatibility, but dataset will be accessed with test_dl.dataset
     else:
-        raise ValueError(f"unsupported type of dataset '{dataset_type}'")
+        raise ValueError(f"unsupported dataset type '{dataset_type}'")
     return dataset, train_dl, valid_dl, test_dl
 
 

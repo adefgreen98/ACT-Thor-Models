@@ -58,13 +58,13 @@ __default_train_config__ = {
     'hidden_sizes': (None, ),
     'use_contrastive': False,
     'use_infonce': True,
-    'cs_type': ('CS4', ['CS3', 'CS4']),
     'conditioning_method': ('embedding', ['concat', 'embedding']),
 
     # Dataset settings
     'extractor_model': ('moca-rn', _ALLOWED_MODELS),
     'use_regression': False,
     'hold_out_procedure': ('samples', VecTransformDataset.allowed_holdout_procedures),
+    'cs_type': ('CS4', ['CS3', 'CS4']),
 
     # Statistics
     'statistical_iterations': (5, ),
@@ -188,7 +188,22 @@ def iterate(model: AbstractVectorTransform, dl, optimizer=None,
             loss_fn=None, mode='eval',
             contrastive=False, infonce=False,
             save_outputs=False):
-    assert not (contrastive and infonce)
+    """
+    Performs one epoch, chosen by the `mode` argument:
+        * `train`
+        * `eval` (validation using vector similarity as metric)
+        * `eval-contrasts` (validation using contrast set task, in this case `dl` argument should be a dataset
+        instead of a dataloader)
+
+    Can be used also as method for evaluating models on the test set.
+
+    By using the `save_outputs` parameter, it can be returned a DataFrame containing the whole set of predictions
+    (only for the eval-contrasts mode).
+
+    The parameters `contrastive` and `infonce` determine the type of loss used and cannot be true at the same time.
+    """
+
+    assert not (contrastive and infonce), "choose only one loss type"
     if mode == 'train':
         model.train()
         loss_history = []
@@ -210,12 +225,11 @@ def iterate(model: AbstractVectorTransform, dl, optimizer=None,
         with torch.no_grad():
             for batch in tqdm(dl, desc=mode.upper() + "..."):
                 preds, gts = model.process_batch(batch)
-                # similarity_history.extend(compute_embedding_distance(gts, preds).flatten().tolist())  # list dimension needed for batch evaluation
                 similarity_history.extend(torch.cosine_similarity(preds, gts, dim=-1).flatten().tolist())
         return torch.tensor(similarity_history).float().mean(dim=-1).item()
     elif mode == 'eval-contrasts':
 
-        assert isinstance(dl, torch.utils.data.Dataset), "in this branch it is assumed for a dataset to be passed"
+        assert isinstance(dl, torch.utils.data.Dataset), "in this branch it is assumed that a Dataset object is passed"
 
         model.eval()
         accuracy_history = []
@@ -228,11 +242,13 @@ def iterate(model: AbstractVectorTransform, dl, optimizer=None,
             pbar = tqdm(total=len(dl), desc=mode.upper() + "...")
             for i in range(len(dl)):
                 smp = dl[i]  # dict containing 'before', 'action', 'positive', 'negatives', 'neg_actions'
+
                 before = smp['before'].unsqueeze(0).to(model.device)
                 action = torch.tensor(smp['action'], dtype=torch.long).unsqueeze(0).to(model.device)
                 positive = smp['positive'].unsqueeze(0).to(model.device)
                 negatives = torch.stack(smp['negatives'], dim=0).unsqueeze(0).to(model.device)
 
+                # Performs actual prediction
                 before, pred, positive, negatives = model(before, action, positive, negatives)
 
                 before = before.to('cpu')
@@ -302,6 +318,11 @@ def evaluate(model, dl, use_contrasts=False, save_outputs=False):
 
 
 def baselines_evaluation(test_set):
+    """
+    Performs one epoch of baselines (random, similarity) evaluation. Not used in the final implementation,
+    which instead relies on the saved outputs' DataFrame (see the `iterate` method).
+    """
+
     random_acc = []
     similarity_acc = []
 
@@ -334,6 +355,9 @@ def baselines_evaluation(test_set):
 
 
 def get_savepath(st_path, args, create_dir=True, create_topdir=True):
+    """
+    Computes a savepath for the experiment by creating also top and intermediate directories if needed.
+    """
     if not create_topdir:
         return None
 
@@ -357,6 +381,13 @@ def get_model(actions, vec_size, args, **kwargs):
 
 
 def run_training(args, fixed_dataset=None, save_results=True, plot=True, return_test_outs=False):
+    """
+    Runs training for a single model. Can be executed passing a fixed dataset to control experiments from the outside,
+    otherwise initializes it independently.
+
+    In case `return_test_outs` is set to `True`, it returns a DataFrame containing raw predictions for test set;
+    see the `iterate` method (evaluate-contrasts mode) for more details on raw outputs.
+    """
     pprint(vars(args))
 
     nr_epochs = int(args.epochs)
@@ -380,6 +411,7 @@ def run_training(args, fixed_dataset=None, save_results=True, plot=True, return_
         args.vect_model = args.vect_model + '-infonce'
 
     if not return_test_outs:
+        # Executed independently thus should save in a separate directory
         pth = Path(args.save_path, "models", "+".join([args.vect_model, args.extractor_model]))
         pth = get_savepath(pth, args, create_dir=save_results)
         pth = Path(*pth.parts[:-1], args.hold_out_procedure + "_" + str(pth.parts[-1]))
@@ -399,6 +431,8 @@ def run_training(args, fixed_dataset=None, save_results=True, plot=True, return_
         ep_acc_mean.append(ev_acc)
         print("Eval acc: ", ep_acc_mean[-1])
 
+        # # Saving best model according to validation accuracy
+        # # (not used, since performances happened to be almost always monotonic)
         # if args.save_model:
         #     if ep_acc_mean[-1] > best_acc:
         #         best_acc = ep_acc_mean[-1]
@@ -418,6 +452,8 @@ def run_training(args, fixed_dataset=None, save_results=True, plot=True, return_
 
 
     if save_results:
+        # In case it is executed independently
+
         os.makedirs(pth, exist_ok=True)
 
         with open(pth / 'config.json', mode='wt') as f:
@@ -452,12 +488,15 @@ def run_training(args, fixed_dataset=None, save_results=True, plot=True, return_
 
 
 def exp_hold_out(args, return_test_outs=False):
-    """Investigates model generalization capabilities by changing holding out procedure and running several tests,
-    in order to build a statistical analysis with randomly sampled test set. At each iteration, a new dataset is
-    initialized, and with it a new split of seen/unseen items (objects or scenes, depending on the procedure); within the
-    'seen' items are created a training and a validation set, while from the 'unseen' ones it is built the test set.
+    """
+    Investigates model generalization capabilities by changing holding out procedure and running several tests,
+    in order to build a statistical analysis with randomly sampled test set.
+    At each iteration, a new dataset is initialized, and with it a new split of seen/unseen items
+    (objects or scenes, depending on the procedure); within the 'seen' items are created a training and a validation set,
+    while from the 'unseen' ones it is built the test set.
     Supposing contrasts of hard-negatives (i.e. same object, same scene) each contrast set appears wholly either in the
-    seen or in the unseen split; instead, for train and validation samples from the same contrast may be put in different splits."""
+    seen or in the unseen split; instead, for train and validation samples from the same contrast may be put in different splits.
+    """
 
     # Hard-coded params
     args.activation = 'relu'
@@ -568,6 +607,10 @@ def exp_hold_out(args, return_test_outs=False):
 
 
 def exp_fcn_hyperparams(args):
+    """
+    Computes all hyperparameters combinations for grid-searching the best Concat-Multi training configuration.
+    """
+
     args.vect_model = 'Concat-Multi'
     args.statistical_iterations = 1
 
@@ -605,6 +648,10 @@ def exp_fcn_hyperparams(args):
 
 
 def exp_regression(args):
+    """
+    Tests AM models where matrices are learned by least squares regression.
+    """
+
     def run_train_regression(args, fixed_dataset=None, save_results=False):
 
         # Prepares path for saving
@@ -634,8 +681,6 @@ def exp_regression(args):
             pandas.DataFrame({
                 'similarity': test_sim,
                 'accuracy': test_acc,
-                # TODO: what other metrics?
-                # 'time': -1.0
             }).to_csv(str(pth / 'metrics.csv'), index=False)
 
         return test_sim, test_acc, full_dataset  # to register hold-out items
@@ -692,6 +737,7 @@ def exp_regression(args):
     g = seaborn.catplot(x='vect_model', y='accuracy', hue='extractor_model', data=df, col="hold_out_procedure", kind="bar", height=10, aspect=.75)
     g.savefig(save_path / 'stats.png')
 
+    # # Code for showing individual datapoints
     # g = seaborn.catplot(hue='extractor_model', x='vect_model', y='accuracy', data=df, kind='swarm', col='hold_out_procedure')
     # g.savefig(save_path / 'observations.png')
 
@@ -699,7 +745,6 @@ def exp_regression(args):
 def exp_cs_size(args):
     """Initially planned to run experiments with different contrast-set-sizes (3, 4). Now only used
     to run hold-out experiments easily and with a better plot."""
-    # args.save_path = 'saved-models-exp'
 
     save_path = get_savepath(args.save_path, args)
     outs = []
@@ -727,11 +772,10 @@ def exp_nearest_neighbors(args, k=None):
     Executes for all models that can be found in subfolders, thus it should be executed carefully when
     there are more than 1 statistical iteration."""
 
-    # Command:
-    # source run_script.sh 1 multimodal/vector_transform.py --exp_nearest_neighbors --load_path ./experiment-nearest-neighbors/models
-
     def run_nearest_neighbors(args, k=None):
-        # Given a path, uses the (first) model present in the path to save NN images
+        """
+        Given a path, uses the (first) model present in the path to save nearest-neighbor images.
+        """
 
         pairwise_distance_fn = lambda prd, other: (1 - torch.cosine_similarity(prd, other)) / 2
 
@@ -833,6 +877,11 @@ def exp_nearest_neighbors(args, k=None):
 
 
 def exp_neighbor_mds(args):
+    """
+    Run an MDS analysis of after-vectors and transformed-vectors by projecting them in a 2D space for visualization.
+    Works only on models saved and pretrained in the specified folder, and only on those folders containing '_neighbors'
+    in their name, i.e. those where the method `exp_nearest_neighbors` has already been executed.
+    """
     import shutil
     from sklearn.manifold import MDS
     from visual_features.data import load_and_rework_csv
@@ -849,6 +898,10 @@ def exp_neighbor_mds(args):
         return path2action[pth]
 
     def run_mds(args):
+        """
+        Runs MDS for a single model. Stores results in the same directory as the model `.pth` file.
+        """
+
         tosave_pth = args.load_path
 
         with open(Path(args.load_path, 'neighbors.pkl'), mode='rb') as fp:
@@ -856,17 +909,16 @@ def exp_neighbor_mds(args):
         with open(Path(args.load_path, 'pred.pkl'), mode='rb') as fp:
             preds = pickle.load(fp)
 
-        # Run mds
         reduction = MDS(
             n_components=2,
             metric=True,
             dissimilarity='euclidean'  # TODO change this to precomputed?
         )
 
+        # Needed to separate vectors from predictions after projection
         separator = len(vecs)
 
         if not os.path.exists(Path(args.load_path, 'mds.pkl')):
-
             v = numpy.vstack([
                 *[el.squeeze().numpy() for el in vecs.values()],
                 *[el['vec'].squeeze().numpy() for el in preds.values()]
@@ -900,6 +952,7 @@ def exp_neighbor_mds(args):
         fig.savefig(Path(tosave_pth) / 'mds-actions.png')
     # #################### End wrap ####################
 
+    # Performs MDS for each saved model in folder
     for r, dnames, fs in os.walk(args.load_path):
         for dname in dnames:
             if "_neighbors" in dname:
@@ -918,10 +971,17 @@ def exp_neighbor_mds(args):
 
 
 def exp_action_crossval(args):
+    """
+    Computes action cross-validation by holding out one different object for several actions and testing models
+    on each of them. Reports performance
+    """
+
     def generate_combinations(annotation_dataframe, max_combs_per_action=5):
         """Generates combinations of each action with object-action pairings containing all possible objects for that action.
-        In order to maintain consistency, for each action, every combination contains the same object-action pairings except
-        for that action. However, these combinations are not necessarily shared across actions."""
+        In order to maintain consistency, for each action, every combination sets as fixed all the object-action
+        associations except for the current action that iterates several objects.
+        Action-object pairings are not shared across actions, meaning that to the same non-current action
+        can correspond different objects when switching across current-actions."""
         from random import choice
 
         # Retrieves all combinations
@@ -949,7 +1009,7 @@ def exp_action_crossval(args):
                 #  - other action B
                 #  - current object o1 belongs to A but is assigned to B
                 # if exists an object shared by the two actions (which will be used in some configuration for A)
-                # then choses it for B, thus "swapping" them, otherwise choses a random object for B
+                # then chooses it for B, thus "swapping" them, otherwise chooses a random object for B
 
                 if len(comb) != (len(existent_combinations) - 1):
                     pass  # completely invalid configuration, multiple objects for the same action
@@ -990,7 +1050,7 @@ def exp_action_crossval(args):
 
     save_path = get_savepath(args.save_path, args, create_topdir=True, create_dir=False)
 
-    nr_samples_per_it = []  # nr test samples
+    nr_samples_per_it = []  # saved for later computations
 
     tested_vect_models = _ALLOWED_TRANSFORM_MODULES
 
@@ -1000,6 +1060,7 @@ def exp_action_crossval(args):
                            'clip-rn': None}  # lists of combinations used for each model saved in .json
 
     for extractor_model in ['moca-rn', 'clip-rn']:
+
         # needed both the following two to fix the dataset
         args.hold_out_procedure = 'action'
         args.extractor_model = extractor_model
@@ -1018,7 +1079,8 @@ def exp_action_crossval(args):
 
                 for stat_it in range(args.statistical_iterations):
 
-                    # place initialization here so that each time training & validation are randomized
+                    # Change action split with the current action-object combination
+                    # (place initialization here so that each time training & validation are randomized)
                     fixed_ds = fixed_ds[0].change_action_split(current_test_combination, args.batch_size)
 
                     nr_samples_per_it.append(fixed_ds[0].get_nr_hold_out_samples())
@@ -1088,17 +1150,18 @@ if __name__ == '__main__':
     elif args.exp_neighbor_mds:
         res = exp_neighbor_mds(args)
     else:
-        # Debug scripts
-        for r, d, fnames in os.walk('./experiment-nearest-neighbors/models'):
-            if r.endswith("_neighbors"):
-                print(r)
-                with open(os.path.join(r, 'neighbors.pkl'), mode='rb') as fp:
-                    n = pickle.load(fp)
-                with open(os.path.join(r, 'pred.pkl'), mode='rb') as fp:
-                    p = pickle.load(fp)
-                with open(os.path.join(r, 'mds.pkl'), mode='rb') as fp:
-                    mds = pickle.load(fp)
-                print(len(n), " | ", len(p), " | ", len(mds), f"({len(n) + len(p)})", sep='     ')
-                del n
-                del p
-                del mds
+        pass
+        # # Place for debug scripts
+        # for r, d, fnames in os.walk('./experiment-nearest-neighbors/models'):
+        #     if r.endswith("_neighbors"):
+        #         print(r)
+        #         with open(os.path.join(r, 'neighbors.pkl'), mode='rb') as fp:
+        #             n = pickle.load(fp)
+        #         with open(os.path.join(r, 'pred.pkl'), mode='rb') as fp:
+        #             p = pickle.load(fp)
+        #         with open(os.path.join(r, 'mds.pkl'), mode='rb') as fp:
+        #             mds = pickle.load(fp)
+        #         print(len(n), " | ", len(p), " | ", len(mds), f"({len(n) + len(p)})", sep='     ')
+        #         del n
+        #         del p
+        #         del mds

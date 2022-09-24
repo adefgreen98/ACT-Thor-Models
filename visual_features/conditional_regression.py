@@ -1,3 +1,8 @@
+
+"""
+
+"""
+
 import os
 import sys
 sys.path.append('..')
@@ -18,6 +23,7 @@ from visual_features.bounding_box_utils import compute_iou
 
 ALLOWED_MODELS = set(ALLOWED_MODELS) - {'all', 'untrained-rn-zero-init'}
 
+
 class BBLoss(nn.Module):
     def __init__(self, alphas=torch.tensor([1.0, 1.0]), use_ce=True):
         super(BBLoss, self).__init__()
@@ -37,7 +43,6 @@ class BBLoss(nn.Module):
             # tmp = torch.cat((yt[:, :2], yt[:, 2:] - yt[:, 0:2]), dim=-1)  # converting to format (x,y,w,h)
             res = self.mse(yp.float(), tmp.float())
             return res
-
 
 
 class ConditionalRegressor(torch.nn.Module):

@@ -48,7 +48,7 @@ DISTANCE_NAMES_MAP = {
 
 class MOCAVisEnc(nn.Module):
     """
-    visual encoder from MOCA
+    visual encoder from MOCA from https://github.com/gistvision/moca/blob/2c2f8fdfe6521be1c731fdd915b1e0787b8db7cd/models/nn/vnn.py#L36
     """
 
     def __init__(self, dframe=147):

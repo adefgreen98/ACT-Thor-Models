@@ -1,4 +1,5 @@
 """Other functions and checks performed during this part of the project"""
+
 import argparse
 import json
 import os
@@ -10,20 +11,7 @@ import torchvision
 from torchinfo import summary
 from argparse import Namespace, ArgumentParser
 
-
 __model_summary_path__ = 'model_summaries'
-
-
-"""
-MOCA evaluation call stack:
-1. EvalTask [models.eval.eval_seq2seq.py] --> instance of Eval [models.eval.eval.py]
-2. Eval.__init__(args) --> import_module(args.model) 
-    Imports the module corresponding to the selected model (default is models.model.seq2seq_im_mask.py)
-3. Module.load(args.model_path) --> retrieves the enc/dec model
-4. Eval.__init__() at line 48 --> self.resnet = 'resnet18' to load visual model for preprocessing
-5. EvalTask.evaluate() [models/eval/eval_task.py] at line 70 --> loading MaskRCNN with 119 classes (unspecified if pretrained)
-    Later will be used for predictions by selecting only pixels of predicted class (line 127)
-"""
 
 
 def check_moca_maskrcnn():
@@ -42,7 +30,8 @@ def check_moca_maskrcnn():
         name_m, p_m = t_moca
         assert name_m == name_t
         if p_t.shape[0] == p_m.shape[0]:
-            print(name_m, torch.nonzero((p_t == p_m).int()).shape[0], "/", "torchvision", p_t.numel(), ",", "moca", p_m.numel())
+            print(name_m, torch.nonzero((p_t == p_m).int()).shape[0], "/", "torchvision", p_t.numel(), ",", "moca",
+                  p_m.numel())
         else:
             print("Size mismatch for layer", name_m)
 
@@ -72,7 +61,8 @@ def compute_last_layer_channels(model):
 
 
 def model_summary(model):
-    return str(summary(model, input_size=(1, 3, 224, 224), depth=3, col_names=["num_params", "input_size", "output_size"]))
+    return str(
+        summary(model, input_size=(1, 3, 224, 224), depth=3, col_names=["num_params", "input_size", "output_size"]))
 
 
 def write_model_summary(model, args, fname=None):
@@ -82,7 +72,8 @@ def write_model_summary(model, args, fname=None):
     fname = args.model_name if fname is None else fname
     fname = os.path.join(__model_summary_path__, fname) + '.txt'
     with open(fname, mode='at') as f:
-        f.write("\n{:-^100}\n".format(args.model_name.upper() + "({})".format('unfrozen' if args.unfreeze else 'frozen')))
+        f.write(
+            "\n{:-^100}\n".format(args.model_name.upper() + "({})".format('unfrozen' if args.unfreeze else 'frozen')))
         f.write(s)
 
     return s
@@ -105,7 +96,7 @@ def load_model_from_path(parent_path, nr=None, name=None, device='cuda'):
     with open(arg_pth, mode='rt') as fp:
         args = json.load(fp)
         args = Namespace(**args)
-        
+
     model = get_model(args, nr_categories).to(args.device)
     model.load_state_dict(torch.load(sd_pth))
     model = model.to(device)
@@ -115,7 +106,9 @@ def load_model_from_path(parent_path, nr=None, name=None, device='cuda'):
 
 
 def valtype(v):
-
+    """
+    Needed for automatically detecting types in the argument parser initialization.
+    """
     if v is None:
         return None
 
@@ -149,7 +142,7 @@ def setup_argparser(config: dict, parser=None):
         else:
             if not isinstance(arg, list) and not isinstance(arg, tuple):
                 # argument with standard default and no choices --> transform in tuple
-                arg = (arg, )
+                arg = (arg,)
 
             tp = valtype(arg[0])
             if len(arg) == 1:
@@ -173,12 +166,19 @@ def contrasts_find_empty():
 def contrast_check_sanity():
     from visual_features.data import get_data
     ds = get_data('dataset/data-bbxs/pickupable-held', dataset_type='vect')
-    contrast_unique_before_images = [set([el['before_image_path'] for el in [row] + [tp[1] for tp in ds.after_vectors.iloc[row['contrast']].iterrows()]]) for _, row in ds.after_vectors.iterrows()]
-    print("checking all contrasts contain exactly 1 before image: ", all([len(c) == 1 for c in contrast_unique_before_images]))  # should contain exactly 1 before image per contrast
-    print("checking number of before images matches exactly the one from the dataset: ", len(set(el for c in contrast_unique_before_images for el in c)))
+    contrast_unique_before_images = [set([el['before_image_path'] for el in
+                                          [row] + [tp[1] for tp in ds.after_vectors.iloc[row['contrast']].iterrows()]])
+                                     for _, row in ds.after_vectors.iterrows()]
+    print("checking all contrasts contain exactly 1 before image: ", all([len(c) == 1 for c in
+                                                                          contrast_unique_before_images]))  # should contain exactly 1 before image per contrast
+    print("checking number of before images matches exactly the one from the dataset: ",
+          len(set(el for c in contrast_unique_before_images for el in c)))
 
 
 def get_optimizer(args, model):
+    """
+    :param args: a Namespace containing the `optimizer` argument and eventually the `scheduler` argument.
+    """
     res = None
     if args.optimizer == 'adamw':
         res = torch.optim.AdamW(model.parameters(), args.learning_rate)
@@ -196,6 +196,7 @@ def get_optimizer(args, model):
         else:
             raise ValueError(f"unsupported scheduler ({args.scheduler})")
     return res
+
 
 if __name__ == '__main__':
     check_moca_maskrcnn()

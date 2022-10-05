@@ -1,5 +1,7 @@
 # ACT-Thor-Models
+
 Repository for the Models' section in the ACT-Thor paper presented at COLING 2022.
+Find the complete version of the code for this paper [here](https://github.com/hannamw/ACT-Thor).
 
 The code for the main experiments is all in the `multimodal` folder: there can be found the main classes
 for the transformation models (Action-Matrix, Concat-Linear and Concat-Multi) and the functions for training,
